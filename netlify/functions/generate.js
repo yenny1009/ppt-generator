@@ -2,6 +2,7 @@ const https = require("https");
 
 function callAPI(provider, apiKey, model, messages, systemPrompt) {
   return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${provider} API 응답 시간 초과 (20초)`)), 20000);
     let hostname, path, headers, body;
 
     if (provider === "anthropic") {
@@ -62,6 +63,7 @@ function callAPI(provider, apiKey, model, messages, systemPrompt) {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
+        clearTimeout(timer);
         try {
           const parsed = JSON.parse(data);
           let text = "";
@@ -78,7 +80,7 @@ function callAPI(provider, apiKey, model, messages, systemPrompt) {
         }
       });
     });
-    req.on("error", reject);
+    req.on("error", (e) => { clearTimeout(timer); reject(e); });
     req.write(body);
     req.end();
   });
