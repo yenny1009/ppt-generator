@@ -2,61 +2,31 @@ const https = require("https");
 
 function callAPI(provider, apiKey, model, messages, systemPrompt) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${provider} API 응답 시간 초과 (20초)`)), 20000);
-    let hostname, path, headers, body;
+    const timer = setTimeout(() => reject(new Error("API 응답 시간 초과 (22초)")), 22000);
 
-    if (provider === "anthropic") {
-      hostname = "api.anthropic.com";
-      path = "/v1/messages";
-      headers = {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      };
-      body = JSON.stringify({
-        model,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages,
-      });
-    } else if (provider === "openai") {
-      hostname = "api.openai.com";
-      path = "/v1/chat/completions";
-      headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      };
-      const msgs = systemPrompt
-        ? [{ role: "system", content: systemPrompt }, ...messages]
-        : messages;
-      body = JSON.stringify({ model, max_tokens: 4096, messages: msgs });
-    } else if (provider === "google") {
-      hostname = "generativelanguage.googleapis.com";
-      path = `/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      headers = { "Content-Type": "application/json" };
-      const contents = messages.map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: Array.isArray(m.content)
-          ? m.content.map((c) =>
-              c.type === "image_url"
-                ? {
-                    inline_data: {
-                      mime_type: c.image_url.url.split(";")[0].split(":")[1],
-                      data: c.image_url.url.split(",")[1],
-                    },
-                  }
-                : { text: c.text || c }
-            )
-          : [{ text: m.content }],
-      }));
-      body = JSON.stringify({
-        contents,
-        systemInstruction: systemPrompt
-          ? { parts: [{ text: systemPrompt }] }
-          : undefined,
-        generationConfig: { maxOutputTokens: 4096 },
-      });
-    }
+    const hostname = "generativelanguage.googleapis.com";
+    const path = `/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const headers = { "Content-Type": "application/json" };
+
+    const contents = messages.map((m) => ({
+      role: "user",
+      parts: Array.isArray(m.content)
+        ? m.content.map((c) =>
+            c.type === "image_url"
+              ? { inline_data: { mime_type: c.image_url.url.split(";")[0].split(":")[1], data: c.image_url.url.split(",")[1] } }
+              : { text: c.text || String(c) }
+          )
+        : [{ text: m.content }],
+    }));
+
+    const body = JSON.stringify({
+      contents,
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      generationConfig: {
+        maxOutputTokens: 4096,
+        responseMimeType: "application/json",
+      },
+    });
 
     const options = { hostname, path, method: "POST", headers };
     const req = https.request(options, (res) => {
@@ -66,17 +36,14 @@ function callAPI(provider, apiKey, model, messages, systemPrompt) {
         clearTimeout(timer);
         try {
           const parsed = JSON.parse(data);
-          let text = "";
-          if (provider === "anthropic") {
-            text = parsed.content?.[0]?.text || "";
-          } else if (provider === "openai") {
-            text = parsed.choices?.[0]?.message?.content || "";
-          } else if (provider === "google") {
-            text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          if (parsed.error) {
+            reject(new Error("Gemini 오류: " + parsed.error.message));
+            return;
           }
+          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
           resolve(text);
         } catch (e) {
-          reject(new Error("API 응답 파싱 실패: " + data.substring(0, 200)));
+          reject(new Error("응답 파싱 실패: " + data.substring(0, 300)));
         }
       });
     });
@@ -86,174 +53,73 @@ function callAPI(provider, apiKey, model, messages, systemPrompt) {
   });
 }
 
-function detectFileType(filename, mimeType) {
-  const ext = filename.toLowerCase().split(".").pop();
-  if (["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) return "image";
-  if (ext === "pdf") return "pdf";
-  if (["doc", "docx"].includes(ext)) return "word";
-  if (ext === "hwp" || ext === "hwpx") return "hwp";
-  if (ext === "html" || ext === "htm") return "html";
-  if (ext === "txt") return "text";
-  if (mimeType?.startsWith("image/")) return "image";
-  return "text";
-}
+const SYSTEM_PROMPT = `You are a presentation designer. Analyze the input and return ONLY a valid JSON object with this exact structure. No markdown, no explanation, no code blocks - pure JSON only:
 
-function selectModel(_fileType) {
-  return {
-    provider: "google",
-    model: "gemini-2.5-flash-preview-04-17",
-    key: process.env.GOOGLE_API_KEY,
-    supportsVision: true,
-  };
-}
+{"title":"presentation title","theme":{"primary":"#1E2761","secondary":"#CADCFC","accent":"#6C63FF","background":"#FFFFFF","text":"#1a1a2e"},"slides":[{"type":"title","title":"slide title","subtitle":"subtitle","notes":"notes"},{"type":"content","title":"slide title","layout":"bullets","content":["item1","item2","item3"],"notes":"notes"}]}
 
-const SYSTEM_PROMPT = `당신은 전문 프레젠테이션 디자이너입니다.
-업로드된 파일이나 텍스트를 분석하여 PPT 슬라이드 구조를 JSON으로 반환하세요.
-
-반드시 아래 JSON 형식만 반환하세요. 다른 텍스트는 절대 포함하지 마세요:
-
-{
-  "title": "프레젠테이션 제목",
-  "theme": {
-    "primary": "#HEX색상",
-    "secondary": "#HEX색상",
-    "accent": "#HEX색상",
-    "background": "#HEX색상",
-    "text": "#HEX색상"
-  },
-  "slides": [
-    {
-      "type": "title",
-      "title": "제목",
-      "subtitle": "부제목",
-      "notes": "발표자 노트"
-    },
-    {
-      "type": "content",
-      "title": "슬라이드 제목",
-      "layout": "bullets | two-column | image-text | stats | quote",
-      "content": ["항목1", "항목2", "항목3"],
-      "notes": "발표자 노트"
-    }
-  ]
-}
-
-규칙:
-- 슬라이드는 최소 5장, 최대 15장
-- 콘텐츠 성격에 맞는 테마 컬러 자동 선정
-- 첫 슬라이드는 반드시 type: "title"
-- 마지막 슬라이드는 type: "closing" (마무리/감사 슬라이드)
-- 한국어 콘텐츠면 한국어로, 영어면 영어로 출력
-- JSON 외 어떤 텍스트도 포함하지 말 것`;
+Rules:
+- 5 to 12 slides total
+- First slide must be type "title"
+- Last slide must be type "closing"
+- Layout options: bullets, two-column, stats, quote
+- Match language of input content
+- Return ONLY the JSON object, nothing else`;
 
 exports.handler = async (event) => {
-  const corsHeaders = {
+  const cors = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
 
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers: corsHeaders, body: "" };
-  }
-
-  if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      headers: corsHeaders,
-      body: JSON.stringify({ error: "Method Not Allowed" }),
-    };
-  }
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+  if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: JSON.stringify({ error: "Method Not Allowed" }) };
 
   try {
     const body = JSON.parse(event.body);
     const { filename, mimeType, content, isBase64, textContent } = body;
 
-    const fileType = filename
-      ? detectFileType(filename, mimeType)
-      : "text";
-    const modelConfig = selectModel(fileType);
+    const GOOGLE_KEY = process.env.GOOGLE_API_KEY;
+    if (!GOOGLE_KEY) return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "GOOGLE_API_KEY가 설정되지 않았습니다." }) };
 
-    if (!modelConfig.key) {
-      return {
-        statusCode: 500,
-        headers: corsHeaders,
-        body: JSON.stringify({
-          error: `${fileType} 처리에 필요한 API 키가 설정되지 않았습니다.`,
-        }),
-      };
-    }
+    const ext = (filename || "").toLowerCase().split(".").pop();
+    const isImage = ["jpg","jpeg","png","gif","webp"].includes(ext) || (mimeType || "").startsWith("image/");
 
     let messages = [];
-
-    if (fileType === "image" && isBase64) {
-      if (modelConfig.provider === "google") {
-        messages = [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: { url: `data:${mimeType};base64,${content}` },
-              },
-              {
-                type: "text",
-                text: "이 이미지의 내용을 분석하여 PPT 슬라이드 JSON을 생성하세요.",
-              },
-            ],
-          },
-        ];
-      } else if (modelConfig.provider === "anthropic") {
-        messages = [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image",
-                source: { type: "base64", media_type: mimeType, data: content },
-              },
-              {
-                type: "text",
-                text: "이 이미지의 내용을 분석하여 PPT 슬라이드 JSON을 생성하세요.",
-              },
-            ],
-          },
-        ];
-      }
+    if (isImage && isBase64) {
+      messages = [{ role: "user", content: [
+        { type: "image_url", image_url: { url: `data:${mimeType};base64,${content}` } },
+        { type: "text", text: "Analyze this image and create a PPT slide structure." }
+      ]}];
     } else {
-      const inputText = textContent || content || "";
-      messages = [
-        {
-          role: "user",
-          content: `다음 내용을 분석하여 PPT 슬라이드 JSON을 생성하세요:\n\n${inputText.substring(0, 8000)}`,
-        },
-      ];
+      const inputText = (textContent || content || "").substring(0, 8000);
+      messages = [{ role: "user", content: `Create PPT slides from this content:\n\n${inputText}` }];
     }
 
-    const rawResponse = await callAPI(
-      modelConfig.provider,
-      modelConfig.key,
-      modelConfig.model,
-      messages,
-      SYSTEM_PROMPT
-    );
+    const rawResponse = await callAPI("google", GOOGLE_KEY, "gemini-2.5-flash-preview-04-17", messages, SYSTEM_PROMPT);
 
-    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error("AI가 유효한 JSON을 반환하지 않았습니다.");
+    let slideData;
+    try {
+      slideData = JSON.parse(rawResponse);
+    } catch {
+      const match = rawResponse.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("AI가 올바른 JSON을 반환하지 않았습니다. 다시 시도해주세요.");
+      slideData = JSON.parse(match[0]);
     }
 
-    const slideData = JSON.parse(jsonMatch[0]);
+    if (!slideData.slides || !Array.isArray(slideData.slides)) {
+      throw new Error("슬라이드 데이터가 올바르지 않습니다. 다시 시도해주세요.");
+    }
 
     return {
       statusCode: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ success: true, data: slideData, modelUsed: modelConfig.model }),
+      headers: { ...cors, "Content-Type": "application/json" },
+      body: JSON.stringify({ success: true, data: slideData, modelUsed: "gemini-2.5-flash" }),
     };
   } catch (error) {
     return {
       statusCode: 500,
-      headers: corsHeaders,
+      headers: cors,
       body: JSON.stringify({ error: error.message }),
     };
   }
