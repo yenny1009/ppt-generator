@@ -1,12 +1,8 @@
 const https = require("https");
 
-function callAPI(provider, apiKey, model, messages, systemPrompt) {
+function callGemini(apiKey, messages, systemPrompt) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("API 응답 시간 초과 (22초)")), 22000);
-
-    const hostname = "generativelanguage.googleapis.com";
-    const path = `/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    const headers = { "Content-Type": "application/json" };
+    const timer = setTimeout(() => reject(new Error("API 응답 시간 초과")), 22000);
 
     const contents = messages.map((m) => ({
       role: "user",
@@ -22,13 +18,16 @@ function callAPI(provider, apiKey, model, messages, systemPrompt) {
     const body = JSON.stringify({
       contents,
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: {
-        maxOutputTokens: 4096,
-        responseMimeType: "application/json",
-      },
+      generationConfig: { maxOutputTokens: 4096, temperature: 0.3 },
     });
 
-    const options = { hostname, path, method: "POST", headers };
+    const options = {
+      hostname: "generativelanguage.googleapis.com",
+      path: `/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    };
+
     const req = https.request(options, (res) => {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
@@ -36,14 +35,11 @@ function callAPI(provider, apiKey, model, messages, systemPrompt) {
         clearTimeout(timer);
         try {
           const parsed = JSON.parse(data);
-          if (parsed.error) {
-            reject(new Error("Gemini 오류: " + parsed.error.message));
-            return;
-          }
+          if (parsed.error) { reject(new Error("Gemini 오류: " + parsed.error.message)); return; }
           const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
           resolve(text);
         } catch (e) {
-          reject(new Error("응답 파싱 실패: " + data.substring(0, 300)));
+          reject(new Error("응답 파싱 실패: " + data.substring(0, 200)));
         }
       });
     });
@@ -53,17 +49,59 @@ function callAPI(provider, apiKey, model, messages, systemPrompt) {
   });
 }
 
-const SYSTEM_PROMPT = `You are a presentation designer. Analyze the input and return ONLY a valid JSON object with this exact structure. No markdown, no explanation, no code blocks - pure JSON only:
+function extractJSON(text) {
+  const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("JSON을 찾을 수 없습니다.");
+  return JSON.parse(cleaned.substring(start, end + 1));
+}
 
-{"title":"presentation title","theme":{"primary":"#1E2761","secondary":"#CADCFC","accent":"#6C63FF","background":"#FFFFFF","text":"#1a1a2e"},"slides":[{"type":"title","title":"slide title","subtitle":"subtitle","notes":"notes"},{"type":"content","title":"slide title","layout":"bullets","content":["item1","item2","item3"],"notes":"notes"}]}
+const SYSTEM_PROMPT = `You are a presentation designer. Analyze the input content and return a JSON object for a PPT presentation.
+
+IMPORTANT: Return ONLY raw JSON. No markdown, no backticks, no explanation text before or after.
+
+Required JSON structure:
+{
+  "title": "Presentation Title",
+  "theme": {
+    "primary": "#1E2761",
+    "secondary": "#CADCFC",
+    "accent": "#6C63FF",
+    "background": "#FFFFFF",
+    "text": "#1a1a2e"
+  },
+  "slides": [
+    {
+      "type": "title",
+      "title": "Main Title",
+      "subtitle": "Subtitle here",
+      "notes": "Speaker notes"
+    },
+    {
+      "type": "content",
+      "title": "Slide Title",
+      "layout": "bullets",
+      "content": ["Point 1", "Point 2", "Point 3"],
+      "notes": "Speaker notes"
+    },
+    {
+      "type": "closing",
+      "title": "Thank You",
+      "content": ["Contact info or closing message"],
+      "notes": ""
+    }
+  ]
+}
 
 Rules:
-- 5 to 12 slides total
-- First slide must be type "title"
-- Last slide must be type "closing"
-- Layout options: bullets, two-column, stats, quote
-- Match language of input content
-- Return ONLY the JSON object, nothing else`;
+- Generate 5 to 10 slides
+- First slide: type must be "title"
+- Last slide: type must be "closing"
+- Layout choices: bullets, two-column, stats, quote
+- Use same language as the input content
+- Choose appropriate theme colors for the topic
+- Return ONLY the JSON object with no other text`;
 
 exports.handler = async (event) => {
   const cors = {
@@ -89,25 +127,17 @@ exports.handler = async (event) => {
     if (isImage && isBase64) {
       messages = [{ role: "user", content: [
         { type: "image_url", image_url: { url: `data:${mimeType};base64,${content}` } },
-        { type: "text", text: "Analyze this image and create a PPT slide structure." }
+        { type: "text", text: "Analyze this image and create PPT slides." }
       ]}];
     } else {
       const inputText = (textContent || content || "").substring(0, 8000);
       messages = [{ role: "user", content: `Create PPT slides from this content:\n\n${inputText}` }];
     }
 
-    const rawResponse = await callAPI("google", GOOGLE_KEY, "gemini-2.5-flash", messages, SYSTEM_PROMPT);
+    const rawResponse = await callGemini(GOOGLE_KEY, messages, SYSTEM_PROMPT);
+    const slideData = extractJSON(rawResponse);
 
-    let slideData;
-    try {
-      slideData = JSON.parse(rawResponse);
-    } catch {
-      const match = rawResponse.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("AI가 올바른 JSON을 반환하지 않았습니다. 다시 시도해주세요.");
-      slideData = JSON.parse(match[0]);
-    }
-
-    if (!slideData.slides || !Array.isArray(slideData.slides)) {
+    if (!slideData.slides || !Array.isArray(slideData.slides) || slideData.slides.length === 0) {
       throw new Error("슬라이드 데이터가 올바르지 않습니다. 다시 시도해주세요.");
     }
 
