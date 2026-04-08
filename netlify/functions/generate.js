@@ -3,7 +3,6 @@ const https = require("https");
 function callGemini(apiKey, messages, systemPrompt) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("API 응답 시간 초과")), 22000);
-
     const contents = messages.map((m) => ({
       role: "user",
       parts: Array.isArray(m.content)
@@ -14,20 +13,17 @@ function callGemini(apiKey, messages, systemPrompt) {
           )
         : [{ text: m.content }],
     }));
-
     const body = JSON.stringify({
       contents,
       systemInstruction: { parts: [{ text: systemPrompt }] },
       generationConfig: { maxOutputTokens: 8192, temperature: 0.3 },
     });
-
     const options = {
       hostname: "generativelanguage.googleapis.com",
       path: `/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
     };
-
     const req = https.request(options, (res) => {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
@@ -57,7 +53,12 @@ function extractJSON(text) {
   return JSON.parse(cleaned.substring(start, end + 1));
 }
 
-const SYSTEM_PROMPT = `You are an expert presentation designer and content strategist.
+function buildSystemPrompt(settings) {
+  const includeCover = settings?.includeCover !== false;
+  const maxSlides = settings?.maxSlides || 8;
+  const maxStr = maxSlides >= 999 ? "제한 없음 (내용에 맞게 최적화)" : `최대 ${maxSlides}장`;
+
+  return `You are an expert presentation designer and content strategist.
 Analyze the input and create a well-structured PPT presentation.
 
 CRITICAL: Return ONLY raw JSON. No markdown, no backticks, no text before or after the JSON.
@@ -80,32 +81,29 @@ JSON structure:
 }
 
 SLIDE STRUCTURE RULES:
-- Total 6 to 10 slides
-- Slide 1: type="title" (title + subtitle only)
-- Slides 2~N-1: type="content" 
-- Last slide: type="closing"
+- Total slides: ${maxStr}
+- Cover slide (type="title"): ${includeCover ? 'REQUIRED as first slide' : 'DO NOT include — start directly with content slides'}
+- Last slide: type="closing" ALWAYS required
 - Each content slide covers ONE specific topic only
 - Split content logically — do NOT pack everything into 1-2 slides
-- Each slide must have 3 to 5 content items maximum
-- If input has many topics, create more slides to separate them clearly
+- Each slide: 3 to 5 content items maximum
+- If input is very short (1-3 sentences), create minimum slides needed (2-3 max)
+- If input is long, use more slides to properly separate topics
 
-LAYOUT RULES — choose the best fit per slide:
-- "bullets": default for most content (lists, features, steps)
-- "two-column": for comparisons, before/after, pros/cons
-- "stats": for numbers, metrics, KPIs (3 items max)
-- "quote": for key messages, mission statements, single important point
+LAYOUT RULES:
+- "bullets": default for lists, features, steps
+- "two-column": comparisons, before/after, pros/cons
+- "stats": numbers, metrics, KPIs (3 items max)
+- "quote": single key message or important statement
 
 CONTENT RULES:
-- Each content item: 1 concise sentence or phrase (under 20 words)
+- Each content item: 1 concise sentence or phrase (under 25 words)
 - Do NOT write paragraphs inside content items
 - Use same language as the input (Korean input → Korean output)
+- Choose theme colors appropriate for the topic/industry
 
-THEME COLOR RULES:
-- Choose colors that match the topic/industry
-- primary: dark strong color for headers
-- background: light or white for content slides
-- accent: highlight color
-- text: dark readable color`;
+Return ONLY the JSON object. Nothing else.`;
+}
 
 exports.handler = async (event) => {
   const cors = {
@@ -119,7 +117,7 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body);
-    const { filename, mimeType, content, isBase64, textContent } = body;
+    const { filename, mimeType, content, isBase64, textContent, settings } = body;
 
     const GOOGLE_KEY = process.env.GOOGLE_API_KEY;
     if (!GOOGLE_KEY) return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "GOOGLE_API_KEY가 설정되지 않았습니다." }) };
@@ -138,7 +136,8 @@ exports.handler = async (event) => {
       messages = [{ role: "user", content: `다음 내용으로 PPT 슬라이드를 만들어주세요. 내용을 논리적으로 여러 슬라이드에 나눠서 구성해주세요:\n\n${inputText}` }];
     }
 
-    const rawResponse = await callGemini(GOOGLE_KEY, messages, SYSTEM_PROMPT);
+    const systemPrompt = buildSystemPrompt(settings);
+    const rawResponse = await callGemini(GOOGLE_KEY, messages, systemPrompt);
     const slideData = extractJSON(rawResponse);
 
     if (!slideData.slides || !Array.isArray(slideData.slides) || slideData.slides.length === 0) {
