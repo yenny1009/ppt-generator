@@ -18,7 +18,7 @@ function callGemini(apiKey, messages, systemPrompt) {
     const body = JSON.stringify({
       contents,
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { maxOutputTokens: 4096, temperature: 0.3 },
+      generationConfig: { maxOutputTokens: 8192, temperature: 0.3 },
     });
 
     const options = {
@@ -39,7 +39,7 @@ function callGemini(apiKey, messages, systemPrompt) {
           const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
           resolve(text);
         } catch (e) {
-          reject(new Error("응답 파싱 실패: " + data.substring(0, 200)));
+          reject(new Error("응답 파싱 실패: " + data.substring(0, 300)));
         }
       });
     });
@@ -57,51 +57,55 @@ function extractJSON(text) {
   return JSON.parse(cleaned.substring(start, end + 1));
 }
 
-const SYSTEM_PROMPT = `You are a presentation designer. Analyze the input content and return a JSON object for a PPT presentation.
+const SYSTEM_PROMPT = `You are an expert presentation designer and content strategist.
+Analyze the input and create a well-structured PPT presentation.
 
-IMPORTANT: Return ONLY raw JSON. No markdown, no backticks, no explanation text before or after.
+CRITICAL: Return ONLY raw JSON. No markdown, no backticks, no text before or after the JSON.
 
-Required JSON structure:
+JSON structure:
 {
   "title": "Presentation Title",
   "theme": {
-    "primary": "#1E2761",
-    "secondary": "#CADCFC",
-    "accent": "#6C63FF",
-    "background": "#FFFFFF",
-    "text": "#1a1a2e"
+    "primary": "#HEX",
+    "secondary": "#HEX",
+    "accent": "#HEX",
+    "background": "#HEX",
+    "text": "#HEX"
   },
   "slides": [
-    {
-      "type": "title",
-      "title": "Main Title",
-      "subtitle": "Subtitle here",
-      "notes": "Speaker notes"
-    },
-    {
-      "type": "content",
-      "title": "Slide Title",
-      "layout": "bullets",
-      "content": ["Point 1", "Point 2", "Point 3"],
-      "notes": "Speaker notes"
-    },
-    {
-      "type": "closing",
-      "title": "Thank You",
-      "content": ["Contact info or closing message"],
-      "notes": ""
-    }
+    {"type":"title","title":"...","subtitle":"...","notes":"..."},
+    {"type":"content","title":"...","layout":"bullets","content":["item1","item2","item3"],"notes":"..."},
+    {"type":"closing","title":"감사합니다","content":["closing message"],"notes":""}
   ]
 }
 
-Rules:
-- Generate 5 to 10 slides
-- First slide: type must be "title"
-- Last slide: type must be "closing"
-- Layout choices: bullets, two-column, stats, quote
-- Use same language as the input content
-- Choose appropriate theme colors for the topic
-- Return ONLY the JSON object with no other text`;
+SLIDE STRUCTURE RULES:
+- Total 6 to 10 slides
+- Slide 1: type="title" (title + subtitle only)
+- Slides 2~N-1: type="content" 
+- Last slide: type="closing"
+- Each content slide covers ONE specific topic only
+- Split content logically — do NOT pack everything into 1-2 slides
+- Each slide must have 3 to 5 content items maximum
+- If input has many topics, create more slides to separate them clearly
+
+LAYOUT RULES — choose the best fit per slide:
+- "bullets": default for most content (lists, features, steps)
+- "two-column": for comparisons, before/after, pros/cons
+- "stats": for numbers, metrics, KPIs (3 items max)
+- "quote": for key messages, mission statements, single important point
+
+CONTENT RULES:
+- Each content item: 1 concise sentence or phrase (under 20 words)
+- Do NOT write paragraphs inside content items
+- Use same language as the input (Korean input → Korean output)
+
+THEME COLOR RULES:
+- Choose colors that match the topic/industry
+- primary: dark strong color for headers
+- background: light or white for content slides
+- accent: highlight color
+- text: dark readable color`;
 
 exports.handler = async (event) => {
   const cors = {
@@ -127,11 +131,11 @@ exports.handler = async (event) => {
     if (isImage && isBase64) {
       messages = [{ role: "user", content: [
         { type: "image_url", image_url: { url: `data:${mimeType};base64,${content}` } },
-        { type: "text", text: "Analyze this image and create PPT slides." }
+        { type: "text", text: "이 이미지 내용을 분석해서 PPT 슬라이드를 만들어주세요." }
       ]}];
     } else {
       const inputText = (textContent || content || "").substring(0, 8000);
-      messages = [{ role: "user", content: `Create PPT slides from this content:\n\n${inputText}` }];
+      messages = [{ role: "user", content: `다음 내용으로 PPT 슬라이드를 만들어주세요. 내용을 논리적으로 여러 슬라이드에 나눠서 구성해주세요:\n\n${inputText}` }];
     }
 
     const rawResponse = await callGemini(GOOGLE_KEY, messages, SYSTEM_PROMPT);
