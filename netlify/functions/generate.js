@@ -16,7 +16,7 @@ function callGemini(apiKey, messages, systemPrompt) {
     const body = JSON.stringify({
       contents,
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { maxOutputTokens: 8192, temperature: 0.3 },
+      generationConfig: { maxOutputTokens: 8192, temperature: 0.1 },
     });
     const options = {
       hostname: "generativelanguage.googleapis.com",
@@ -55,54 +55,56 @@ function extractJSON(text) {
 
 function buildSystemPrompt(settings) {
   const includeCover = settings?.includeCover !== false;
+  const includeClosing = settings?.includeClosing !== false;
   const maxSlides = settings?.maxSlides || 8;
-  const maxStr = maxSlides >= 999 ? "제한 없음 (내용에 맞게 최적화)" : `최대 ${maxSlides}장`;
+  const maxStr = maxSlides >= 999 ? "내용에 맞게 최적화" : `최대 ${maxSlides}장`;
 
-  return `You are an expert presentation designer and content strategist.
-Analyze the input and create a well-structured PPT presentation.
+  return `You are a presentation slide formatter. Your job is to organize the input content into slides WITHOUT changing, summarizing, or rewriting any of the text.
 
-CRITICAL: Return ONLY raw JSON. No markdown, no backticks, no text before or after the JSON.
+CRITICAL RULES — NEVER VIOLATE:
+1. NEVER rewrite, summarize, or paraphrase the input content
+2. Use the EXACT words from the input as-is
+3. Only split and organize the content into logical slide groups
+4. Return ONLY raw JSON — no markdown, no backticks, no explanation
 
 JSON structure:
 {
-  "title": "Presentation Title",
+  "title": "exact title from input or first line",
   "theme": {
     "primary": "#HEX",
-    "secondary": "#HEX",
+    "secondary": "#HEX", 
     "accent": "#HEX",
     "background": "#HEX",
     "text": "#HEX"
   },
   "slides": [
-    {"type":"title","title":"...","subtitle":"...","notes":"..."},
-    {"type":"content","title":"...","layout":"bullets","content":["item1","item2","item3"],"notes":"..."},
-    {"type":"closing","title":"감사합니다","content":["closing message"],"notes":""}
+    {"type":"title","title":"exact title","subtitle":"exact subtitle if exists","notes":""},
+    {"type":"content","title":"exact section heading","layout":"bullets","content":["exact item 1","exact item 2"],"notes":""},
+    {"type":"closing","title":"감사합니다","content":[""],"notes":""}
   ]
 }
 
-SLIDE STRUCTURE RULES:
+SLIDE STRUCTURE:
 - Total slides: ${maxStr}
-- Cover slide (type="title"): ${includeCover ? 'REQUIRED as first slide' : 'DO NOT include — start directly with content slides'}
-- Last slide: type="closing" ALWAYS required
-- Each content slide covers ONE specific topic only
-- Split content logically — do NOT pack everything into 1-2 slides
-- Each slide: 3 to 5 content items maximum
-- If input is very short (1-3 sentences), create minimum slides needed (2-3 max)
-- If input is long, use more slides to properly separate topics
+- Cover slide (type="title"): ${includeCover ? 'INCLUDE as first slide' : 'DO NOT include'}
+- Closing slide (type="closing"): ${includeClosing ? 'INCLUDE as last slide' : 'DO NOT include'}
+- Content slides: group ONLY thematically related items together on the same slide
+- Each slide: maximum 5 items — if a group has more, split into multiple slides with same heading
+- If input is very short (under 5 lines), use minimum slides needed
 
-LAYOUT RULES:
-- "bullets": default for lists, features, steps
-- "two-column": comparisons, before/after, pros/cons
-- "stats": numbers, metrics, KPIs (3 items max)
-- "quote": single key message or important statement
+GROUPING RULES:
+- Items that belong to the same category/topic go on the same slide
+- Items from different categories go on separate slides
+- Never mix unrelated content on one slide
+- Use the exact heading/title text from the input for slide titles
 
-CONTENT RULES:
-- Each content item: 1 concise sentence or phrase (under 25 words)
-- Do NOT write paragraphs inside content items
-- Use same language as the input (Korean input → Korean output)
-- Choose theme colors appropriate for the topic/industry
+LAYOUT SELECTION:
+- "bullets": lists, features, action items (default)
+- "two-column": explicitly comparative content
+- "stats": numeric metrics, KPIs (max 3 items)
+- "quote": single key statement
 
-Return ONLY the JSON object. Nothing else.`;
+Use same language as input. Return ONLY the JSON.`;
 }
 
 exports.handler = async (event) => {
@@ -129,11 +131,11 @@ exports.handler = async (event) => {
     if (isImage && isBase64) {
       messages = [{ role: "user", content: [
         { type: "image_url", image_url: { url: `data:${mimeType};base64,${content}` } },
-        { type: "text", text: "이 이미지 내용을 분석해서 PPT 슬라이드를 만들어주세요." }
+        { type: "text", text: "이 이미지의 텍스트 내용을 그대로 PPT 슬라이드로 구성해주세요. 내용을 절대 수정하지 마세요." }
       ]}];
     } else {
       const inputText = (textContent || content || "").substring(0, 8000);
-      messages = [{ role: "user", content: `다음 내용으로 PPT 슬라이드를 만들어주세요. 내용을 논리적으로 여러 슬라이드에 나눠서 구성해주세요:\n\n${inputText}` }];
+      messages = [{ role: "user", content: `아래 내용을 슬라이드로 구성해주세요. 텍스트를 절대 수정하거나 요약하지 말고 원문 그대로 사용하세요:\n\n${inputText}` }];
     }
 
     const systemPrompt = buildSystemPrompt(settings);
