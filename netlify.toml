@@ -5,9 +5,6 @@
 [functions]
   node_bundler = "esbuild"
 
-[functions."generate"]
-  timeout = 26
-
 [[headers]]
   for = "/*"
   [headers.values]
