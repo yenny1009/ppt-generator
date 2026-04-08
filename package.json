@@ -1,0 +1,11 @@
+{
+  "name": "ppt-generator",
+  "version": "1.0.0",
+  "description": "AI 기반 PPT 자동 생성기",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  }
+}
