@@ -244,10 +244,7 @@ textarea::placeholder{color:var(--text-muted);}
           <span class="setting-label">여백</span>
           <select class="form-select" id="margin"><option value="0.3">좁게</option><option value="0.5" selected>보통</option><option value="0.8">넓게</option></select>
         </div>
-        <div class="setting-row">
-          <span class="setting-label">오버레이</span>
-          <select class="form-select" id="overlayOpacity"><option value="30">밝게 (30%)</option><option value="45" selected>보통 (45%)</option><option value="60">어둡게 (60%)</option><option value="75">매우 어둡게 (75%)</option></select>
-        </div>
+
       </div>
     </div>
 
@@ -421,7 +418,7 @@ function getSettings() {
     bodyBold: document.getElementById('bodyWeight').value==='true',
     lineSpacing: parseFloat(document.getElementById('lineSpacing').value)||1.6,
     margin: parseFloat(document.getElementById('margin').value)||0.5,
-    overlayOpacity: parseInt(document.getElementById('overlayOpacity').value)||45,
+
   };
 }
 
@@ -524,6 +521,14 @@ async function redownload(i) {
   await buildPptx(item.data, item.settings||getSettings());
 }
 
+function deleteHistory(id, e) {
+  e.stopPropagation();
+  const history = JSON.parse(localStorage.getItem('ppt_history')||'[]');
+  const updated = history.filter(item => item.id !== id);
+  localStorage.setItem('ppt_history', JSON.stringify(updated));
+  renderHistory();
+}
+
 function clearAllHistory() {
   if (!confirm('작업 결과를 전부 삭제할까요?')) return;
   localStorage.removeItem('ppt_history');
@@ -542,6 +547,25 @@ function getLuminance(hex) {
   return 0.299*parseInt(c2.substr(0,2),16)+0.587*parseInt(c2.substr(2,2),16)+0.114*parseInt(c2.substr(4,2),16);
 }
 function autoTC(bgHex){return getLuminance(bgHex||"#000000")>145?"1a1a2e":"FFFFFF";}
+
+// 배경 이미지 평균 밝기 계산 (Canvas 사용)
+function getImageLuminance(dataUrl) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 40; canvas.height = 22;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, 40, 22);
+      const d = ctx.getImageData(0,0,40,22).data;
+      let sum = 0;
+      for (let i=0; i<d.length; i+=4) sum += 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      resolve(sum / (d.length/4));
+    };
+    img.onerror = () => resolve(80);
+    img.src = dataUrl;
+  });
+}
 
 function buildTheme(coreColor, mood) {
   const c = coreColor||'#2196F3';
@@ -580,8 +604,7 @@ async function buildPptx(data, s) {
       const bgDataUrl = bgType==='content'?bgImages.content[contentBgIdx%bgImages.content.length]:bgImages[bgType];
       if (bgType==='content') contentBgIdx++;
       const ext = bgDataUrl.split(';')[0].split('/')[1]||'jpeg';
-      slide.addImage({data:`data:image/${ext};base64,${b64(bgDataUrl)}`,x:0,y:0,w:W,h:H});
-      slide.addShape(pptx.ShapeType.rect,{x:0,y:0,w:W,h:H,fill:{color:'000000',transparency:OV}});
+      slide.addImage({data:'data:image/'+ext+';base64,'+b64(bgDataUrl),x:0,y:0,w:W,h:H});
     } else {
       slide.addShape(pptx.ShapeType.rect,{x:0,y:0,w:W,h:H,fill:{color:hx(theme.background)}});
     }
@@ -593,6 +616,8 @@ async function buildPptx(data, s) {
       // 커버: 좌측 세로 강조바 + 중앙 정렬
       slide.addShape(pptx.ShapeType.rect,{x:0,y:0,w:0.25,h:H,fill:{color:ac}});
       slide.addShape(pptx.ShapeType.rect,{x:0,y:H-0.08,w:W,h:0.08,fill:{color:ac,transparency:60}});
+      // 배경 있을 때 제목 영역에 반투명 박스
+      if (hasBg) slide.addShape(pptx.ShapeType.rect,{x:0.45,y:H*0.2,w:W-0.55,h:H*0.55,fill:{color:'000000',transparency:45},line:{color:'FFFFFF',width:0,transparency:100}});
       slide.addText(sl.title||data.title||'',{
         x:0.55,y:H*0.25,w:W-0.7,h:H*0.38,
         fontFace:s.titleFont,fontSize:s.coverTitleSize,bold:s.titleBold,color:tc,
@@ -612,6 +637,7 @@ async function buildPptx(data, s) {
 
     } else if (sl.type==='closing') {
       slide.addShape(pptx.ShapeType.rect,{x:W*0.3,y:H*0.6,w:W*0.4,h:0.06,fill:{color:ac}});
+      if (hasBg) slide.addShape(pptx.ShapeType.rect,{x:M,y:H*0.22,w:W-M*2,h:H*0.55,fill:{color:'000000',transparency:45}});
       slide.addText(sl.title||'감사합니다',{
         x:M,y:H*0.28,w:W-M*2,h:H*0.35,
         fontFace:s.titleFont,fontSize:s.coverTitleSize,bold:s.titleBold,color:tc,align:'center',wrap:true
@@ -642,6 +668,8 @@ async function buildPptx(data, s) {
       const ch = H-cy-M*0.4;
       const cx = M;
       const cw = W-M*2;
+      // 배경 있을 때 본문 영역 반투명 박스
+      if (hasBg) slide.addShape(pptx.ShapeType.rect,{x:cx-0.1,y:cy-0.05,w:cw+0.2,h:ch+0.1,fill:{color:'000000',transparency:40}});
       const autoSize = autoFontSize(s.bodySize, content.length);
       const autoLS = autoLineSpacing(s.lineSpacing, content.length);
 
