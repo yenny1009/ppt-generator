@@ -96,7 +96,7 @@ exports.handler = async (event) => {
       messages = [{ role: "user", content: `Create PPT slides from this content:\n\n${inputText}` }];
     }
 
-    const rawResponse = await callAPI("google", GOOGLE_KEY, "gemini-2.0-flash", messages, SYSTEM_PROMPT);
+    const rawResponse = await callAPI("google", GOOGLE_KEY, "gemini-2.5-flash", messages, SYSTEM_PROMPT);
 
     let slideData;
     try {
