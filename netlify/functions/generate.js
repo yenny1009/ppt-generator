@@ -98,50 +98,13 @@ function detectFileType(filename, mimeType) {
   return "text";
 }
 
-function selectModel(fileType) {
-  const OPENAI_KEY = process.env.OPENAI_API_KEY;
-  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-  const GOOGLE_KEY = process.env.GOOGLE_API_KEY;
-
-  const models = {
-    text: {
-      provider: "openai",
-      model: "gpt-4.1-mini",
-      key: OPENAI_KEY,
-      supportsVision: false,
-    },
-    html: {
-      provider: "openai",
-      model: "gpt-4.1",
-      key: OPENAI_KEY,
-      supportsVision: false,
-    },
-    image: {
-      provider: "google",
-      model: "gemini-2.5-flash",
-      key: GOOGLE_KEY,
-      supportsVision: true,
-    },
-    pdf: {
-      provider: "google",
-      model: "gemini-2.5-flash",
-      key: GOOGLE_KEY,
-      supportsVision: true,
-    },
-    word: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      key: ANTHROPIC_KEY,
-      supportsVision: true,
-    },
-    hwp: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      key: ANTHROPIC_KEY,
-      supportsVision: true,
-    },
+function selectModel(_fileType) {
+  return {
+    provider: "google",
+    model: "gemini-2.5-flash-preview-04-17",
+    key: process.env.GOOGLE_API_KEY,
+    supportsVision: true,
   };
-  return models[fileType] || models.text;
 }
 
 const SYSTEM_PROMPT = `당신은 전문 프레젠테이션 디자이너입니다.
